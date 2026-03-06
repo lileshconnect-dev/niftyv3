@@ -1,0 +1,55 @@
+{
+  "lil1211": {
+    "password": "00ec207069bcd0e3b6559fcc19c2e73ec8696b5814c5688120471abd38113fbb",
+    "cash": 80598.7,
+    "portfolio": {
+      "TECHM.NS": {
+        "qty": 1,
+        "avg_price": 1333.3
+      },
+      "TCS.NS": {
+        "qty": 7,
+        "avg_price": 2581.5
+      }
+    },
+    "transactions": [
+      {
+        "action": "BUY",
+        "ticker": "TECHM.NS",
+        "name": "Tech Mahindra",
+        "qty": 1,
+        "price": 1333.3,
+        "total": 1333.3,
+        "time": "06 Mar 11:51"
+      },
+      {
+        "action": "BUY",
+        "ticker": "TCS.NS",
+        "name": "Tata Consultancy Services",
+        "qty": 1,
+        "price": 2579.0,
+        "total": 2579.0,
+        "time": "06 Mar 11:55"
+      },
+      {
+        "action": "SELL",
+        "ticker": "TCS.NS",
+        "name": "Tata Consultancy Services",
+        "qty": 1,
+        "price": 2581.5,
+        "total": 2581.5,
+        "time": "06 Mar 12:16"
+      },
+      {
+        "action": "BUY",
+        "ticker": "TCS.NS",
+        "name": "Tata Consultancy Services",
+        "qty": 7,
+        "price": 2581.5,
+        "total": 18070.5,
+        "time": "06 Mar 12:17"
+      }
+    ],
+    "joined": "06 Mar 2026"
+  }
+}

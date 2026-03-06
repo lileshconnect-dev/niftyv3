@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>NiftyPulse — Login</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+:root{--bg:#060810;--surface:#0d1117;--border:#1e2435;--green:#00ff87;--red:#ff3e6c;--blue:#4af3ff;--text:#e2e8f0;--dim:#8896a8;--muted:#4a5568;}
+body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;min-height:100vh;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+body::before{content:'';position:fixed;inset:0;z-index:0;background:radial-gradient(ellipse at 20% 50%,rgba(0,255,135,0.05) 0%,transparent 60%),radial-gradient(ellipse at 80% 50%,rgba(74,243,255,0.05) 0%,transparent 60%);}
+.wrap{position:relative;z-index:1;width:100%;max-width:420px;padding:24px;}
+.logo{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;text-align:center;margin-bottom:6px;letter-spacing:-0.02em;}
+.logo span{color:var(--green);}
+.tagline{text-align:center;font-size:0.65rem;color:var(--dim);margin-bottom:30px;letter-spacing:0.1em;}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:30px;}
+.tabs{display:flex;margin-bottom:26px;background:rgba(255,255,255,0.04);border-radius:8px;padding:4px;}
+.tab{flex:1;text-align:center;padding:9px;border-radius:6px;font-size:0.72rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;transition:all .2s;color:var(--dim);}
+.tab.active{background:var(--green);color:#000;}
+.field{margin-bottom:15px;}
+.field label{display:block;font-size:0.62rem;color:var(--dim);letter-spacing:0.1em;text-transform:uppercase;margin-bottom:6px;}
+.field input{width:100%;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:8px;padding:11px 14px;color:var(--text);font-family:'Space Mono',monospace;font-size:0.85rem;outline:none;transition:border-color .2s;}
+.field input:focus{border-color:var(--green);}
+.btn{width:100%;padding:13px;border-radius:8px;border:none;background:var(--green);color:#000;font-family:'Syne',sans-serif;font-size:0.9rem;font-weight:700;cursor:pointer;transition:opacity .2s;margin-top:4px;}
+.btn:hover{opacity:0.88;}
+.msg{margin-top:12px;padding:10px 14px;border-radius:8px;font-size:0.7rem;text-align:center;display:none;}
+.msg.error{background:rgba(255,62,108,0.12);border:1px solid rgba(255,62,108,0.3);color:var(--red);}
+.msg.success{background:rgba(0,255,135,0.1);border:1px solid rgba(0,255,135,0.25);color:var(--green);}
+.hint{text-align:center;font-size:0.65rem;color:var(--muted);margin-top:20px;}
+.hint span{color:var(--green);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">Nifty<span>Pulse</span></div>
+  <div class="tagline">LIVE NIFTY 50 · MOCK TRADING · AI PREDICTIONS</div>
+  <div class="card">
+    <div class="tabs">
+      <div class="tab active" id="tabLogin" onclick="switchTab('login')">Login</div>
+      <div class="tab" id="tabReg" onclick="switchTab('register')">Register</div>
+    </div>
+    <div id="formLogin">
+      <div class="field"><label>Username</label><input type="text" id="lUser" placeholder="your username"/></div>
+      <div class="field"><label>Password</label><input type="password" id="lPass" placeholder="••••••••"/></div>
+      <button class="btn" onclick="doLogin()">Login →</button>
+    </div>
+    <div id="formReg" style="display:none">
+      <div class="field"><label>Username</label><input type="text" id="rUser" placeholder="choose a username"/></div>
+      <div class="field"><label>Password</label><input type="password" id="rPass" placeholder="min 4 characters"/></div>
+      <button class="btn" onclick="doRegister()">Create Account →</button>
+    </div>
+    <div class="msg" id="msgBox"></div>
+  </div>
+  <div class="hint">Start with <span>₹1,00,000</span> virtual cash · Trade Nifty 50 live</div>
+</div>
+<script>
+function switchTab(t){
+  document.getElementById('formLogin').style.display = t==='login'?'block':'none';
+  document.getElementById('formReg').style.display   = t==='register'?'block':'none';
+  document.getElementById('tabLogin').classList.toggle('active',t==='login');
+  document.getElementById('tabReg').classList.toggle('active',t==='register');
+  showMsg('','');
+}
+function showMsg(msg,type){
+  const el=document.getElementById('msgBox');
+  el.textContent=msg; el.className='msg '+type; el.style.display=msg?'block':'none';
+}
+async function doLogin(){
+  const u=document.getElementById('lUser').value.trim();
+  const p=document.getElementById('lPass').value;
+  if(!u||!p){showMsg('Fill all fields','error');return;}
+  const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const d=await r.json();
+  if(d.ok){showMsg('Welcome back!','success');setTimeout(()=>location.href='/',700);}
+  else showMsg(d.msg,'error');
+}
+async function doRegister(){
+  const u=document.getElementById('rUser').value.trim();
+  const p=document.getElementById('rPass').value;
+  if(!u||!p){showMsg('Fill all fields','error');return;}
+  const r=await fetch('/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:u,password:p})});
+  const d=await r.json();
+  if(d.ok){showMsg('Account created!','success');setTimeout(()=>location.href='/',700);}
+  else showMsg(d.msg,'error');
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){
+    if(document.getElementById('formLogin').style.display!=='none') doLogin();
+    else doRegister();
+  }
+});
+</script>
+</body>
+</html>
