@@ -353,4 +353,5 @@ if __name__ == '__main__':
     t = threading.Thread(target=fetch_loop, daemon=True)
     t.start()
     print("🚀 NiftyPulse → http://localhost:5000")
-    socketio.run(app, debug=False, host='0.0.0.0', port=5000)
+    port = int(os.environ.get('PORT', 5000))
+    socketio.run(app, debug=False, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
