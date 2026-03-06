@@ -1,19 +1,23 @@
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from flask_socketio import SocketIO, emit
+from pymongo import MongoClient
 import yfinance as yf
 import numpy as np
 from datetime import datetime
 import threading
 import time
-import json
 import hashlib
 import os
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'nifty50secret2024xyz'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'nifty50secret2024xyz')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-USERS_FILE = 'users.json'
+MONGO_URI = os.environ.get('MONGO_URI', '')
+client = MongoClient(MONGO_URI)
+db = client['niftypulse']
+users_col = db['users']
+
 STARTING_CASH = 100000
 
 NIFTY50 = [
@@ -53,20 +57,11 @@ stock_cache = {}
 connected_users = 0
 fetch_lock = threading.Lock()
 
-def load_users():
-    if os.path.exists(USERS_FILE):
-        try:
-            with open(USERS_FILE, 'r') as f:
-                return json.load(f)
-        except:
-            return {}
-    return {}
+def get_user(username):
+    return users_col.find_one({'username': username}, {'_id': 0})
 
-def save_users(u):
-    with open(USERS_FILE, 'w') as f:
-        json.dump(u, f, indent=2)
-
-users_db = load_users()
+def save_user(u):
+    users_col.update_one({'username': u['username']}, {'$set': u}, upsert=True)
 
 def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -94,8 +89,7 @@ def predict_next(prices):
 def get_signal(prices, rsi, cur, pred):
     ma7 = moving_average(prices, 7)
     ma21 = moving_average(prices, 21)
-    score = 0
-    reasons = []
+    score = 0; reasons = []
     if rsi < 35:   score += 2; reasons.append("RSI oversold")
     elif rsi > 65: score -= 2; reasons.append("RSI overbought")
     if ma7 and ma21:
@@ -127,22 +121,13 @@ def fetch_stock(ticker):
         dates = [str(d.date()) for d in hist.index[-30:]]
         chart = [round(float(p), 2) for p in prices[-30:]]
         return {
-            "ticker":    ticker,
-            "name":      STOCK_NAMES.get(ticker, ticker.replace('.NS','')),
-            "price":     cur,
-            "change":    chg,
-            "changePct": chgp,
-            "rsi":       rsi,
-            "ma7":       moving_average(prices, 7),
-            "ma21":      moving_average(prices, 21),
-            "ma50":      moving_average(prices, 50),
-            "predicted": pred,
-            "signal":    sig,
+            "ticker": ticker, "name": STOCK_NAMES.get(ticker, ticker.replace('.NS','')),
+            "price": cur, "change": chg, "changePct": chgp, "rsi": rsi,
+            "ma7": moving_average(prices,7), "ma21": moving_average(prices,21),
+            "ma50": moving_average(prices,50), "predicted": pred, "signal": sig,
             "sparkline": [round(p,2) for p in prices[-10:]],
-            "chart":     chart,
-            "dates":     dates,
-            "high52":    round(max(prices), 2),
-            "low52":     round(min(prices), 2),
+            "chart": chart, "dates": dates,
+            "high52": round(max(prices),2), "low52": round(min(prices),2),
             "timestamp": datetime.now().strftime("%H:%M:%S"),
         }
     except Exception as e:
@@ -186,7 +171,8 @@ def login():
         d = request.get_json()
         u = d.get('username','').strip().lower()
         p = d.get('password','')
-        if u in users_db and users_db[u]['password'] == hash_pw(p):
+        user = get_user(u)
+        if user and user['password'] == hash_pw(p):
             session['user'] = u
             return jsonify({"ok": True})
         return jsonify({"ok": False, "msg": "Invalid username or password"})
@@ -200,15 +186,12 @@ def register():
     if not u or not p:  return jsonify({"ok":False,"msg":"Fill all fields"})
     if len(u) < 3:      return jsonify({"ok":False,"msg":"Username must be 3+ characters"})
     if len(p) < 4:      return jsonify({"ok":False,"msg":"Password must be 4+ characters"})
-    if u in users_db:   return jsonify({"ok":False,"msg":"Username already taken"})
-    users_db[u] = {
-        'password': hash_pw(p),
-        'cash': float(STARTING_CASH),
-        'portfolio': {},
-        'transactions': [],
-        'joined': datetime.now().strftime("%d %b %Y")
-    }
-    save_users(users_db)
+    if get_user(u):     return jsonify({"ok":False,"msg":"Username already taken"})
+    save_user({
+        'username': u, 'password': hash_pw(p),
+        'cash': float(STARTING_CASH), 'portfolio': {},
+        'transactions': [], 'joined': datetime.now().strftime("%d %b %Y")
+    })
     session['user'] = u
     return jsonify({"ok": True})
 
@@ -239,10 +222,8 @@ def api_stock_detail(ticker):
 @app.route('/api/portfolio')
 def api_portfolio():
     if 'user' not in session: return jsonify({}), 401
-    u = users_db[session['user']]
-    portfolio_list = []
-    total_invested = 0
-    total_current  = 0
+    u = get_user(session['user'])
+    portfolio_list = []; total_invested = 0; total_current = 0
     for ticker, pos in u['portfolio'].items():
         with fetch_lock:
             cur_price = stock_cache.get(ticker, {}).get('price', pos['avg_price'])
@@ -250,75 +231,60 @@ def api_portfolio():
         current  = pos['qty'] * cur_price
         pnl      = current - invested
         pnl_pct  = (pnl / invested * 100) if invested else 0
-        total_invested += invested
-        total_current  += current
+        total_invested += invested; total_current += current
         portfolio_list.append({
-            'ticker':    ticker,
-            'name':      STOCK_NAMES.get(ticker, ticker.replace('.NS','')),
-            'qty':       pos['qty'],
-            'avg_price': round(pos['avg_price'], 2),
-            'cur_price': round(cur_price, 2),
-            'invested':  round(invested, 2),
-            'current':   round(current, 2),
-            'pnl':       round(pnl, 2),
-            'pnl_pct':   round(pnl_pct, 2),
+            'ticker': ticker, 'name': STOCK_NAMES.get(ticker, ticker.replace('.NS','')),
+            'qty': pos['qty'], 'avg_price': round(pos['avg_price'],2),
+            'cur_price': round(cur_price,2), 'invested': round(invested,2),
+            'current': round(current,2), 'pnl': round(pnl,2), 'pnl_pct': round(pnl_pct,2),
         })
     return jsonify({
-        'cash':           round(u['cash'], 2),
-        'portfolio':      portfolio_list,
-        'total_invested': round(total_invested, 2),
-        'total_current':  round(total_current, 2),
-        'total_pnl':      round(total_current - total_invested, 2),
-        'transactions':   u['transactions'][-30:]
+        'cash': round(u['cash'],2), 'portfolio': portfolio_list,
+        'total_invested': round(total_invested,2), 'total_current': round(total_current,2),
+        'total_pnl': round(total_current-total_invested,2),
+        'transactions': u['transactions'][-30:]
     })
 
 @app.route('/api/trade', methods=['POST'])
 def api_trade():
     if 'user' not in session: return jsonify({"ok":False,"msg":"Login required"}), 401
-    d      = request.get_json()
-    ticker = d.get('ticker')
-    action = d.get('action')
-    qty    = int(d.get('qty', 1))
-    u      = users_db[session['user']]
+    d = request.get_json()
+    ticker = d.get('ticker'); action = d.get('action'); qty = int(d.get('qty',1))
+    u = get_user(session['user'])
     with fetch_lock:
         stock = stock_cache.get(ticker)
     if not stock: return jsonify({"ok":False,"msg":"Stock data not ready yet, wait 1 min"})
-    price = stock['price']
-    total = round(price * qty, 2)
+    price = stock['price']; total = round(price * qty, 2)
+    portfolio = u['portfolio']; cash = u['cash']
     if action == 'buy':
-        if u['cash'] < total:
-            return jsonify({"ok":False,"msg":f"Need ₹{total:,.2f} but only ₹{u['cash']:,.2f} available"})
-        u['cash'] -= total
-        if ticker in u['portfolio']:
-            pos = u['portfolio'][ticker]
-            new_qty = pos['qty'] + qty
-            pos['avg_price'] = (pos['avg_price'] * pos['qty'] + price * qty) / new_qty
+        if cash < total:
+            return jsonify({"ok":False,"msg":f"Need ₹{total:,.2f} but only ₹{cash:,.2f} available"})
+        cash -= total
+        if ticker in portfolio:
+            pos = portfolio[ticker]; new_qty = pos['qty'] + qty
+            pos['avg_price'] = (pos['avg_price']*pos['qty'] + price*qty) / new_qty
             pos['qty'] = new_qty
         else:
-            u['portfolio'][ticker] = {'qty': qty, 'avg_price': price}
+            portfolio[ticker] = {'qty': qty, 'avg_price': price}
     elif action == 'sell':
-        if ticker not in u['portfolio'] or u['portfolio'][ticker]['qty'] < qty:
+        if ticker not in portfolio or portfolio[ticker]['qty'] < qty:
             return jsonify({"ok":False,"msg":"Not enough shares to sell"})
-        u['cash'] += total
-        u['portfolio'][ticker]['qty'] -= qty
-        if u['portfolio'][ticker]['qty'] == 0:
-            del u['portfolio'][ticker]
-    u['transactions'].append({
-        'action': action.upper(),
-        'ticker': ticker,
-        'name':   STOCK_NAMES.get(ticker, ticker),
-        'qty':    qty,
-        'price':  price,
-        'total':  total,
-        'time':   datetime.now().strftime("%d %b %H:%M")
+        cash += total
+        portfolio[ticker]['qty'] -= qty
+        if portfolio[ticker]['qty'] == 0: del portfolio[ticker]
+    transactions = u['transactions']
+    transactions.append({
+        'action': action.upper(), 'ticker': ticker,
+        'name': STOCK_NAMES.get(ticker, ticker), 'qty': qty,
+        'price': price, 'total': total, 'time': datetime.now().strftime("%d %b %H:%M")
     })
-    save_users(users_db)
-    return jsonify({"ok":True, "cash": round(u['cash'],2), "msg": f"{action.upper()} {qty} × {ticker.replace('.NS','')} @ ₹{price:,.2f}"})
+    save_user({**u, 'cash': cash, 'portfolio': portfolio, 'transactions': transactions})
+    return jsonify({"ok":True, "cash": round(cash,2), "msg": f"{action.upper()} {qty} x {ticker.replace('.NS','')} @ Rs.{price:,.2f}"})
 
 @app.route('/api/leaderboard')
 def api_leaderboard():
     board = []
-    for uname, u in users_db.items():
+    for u in users_col.find({}, {'_id': 0}):
         total = u['cash']
         for ticker, pos in u['portfolio'].items():
             with fetch_lock:
@@ -326,15 +292,12 @@ def api_leaderboard():
             total += pos['qty'] * cur
         pnl = total - STARTING_CASH
         board.append({
-            'username':    uname,
-            'total_value': round(total, 2),
-            'pnl':         round(pnl, 2),
-            'pnl_pct':     round((pnl / STARTING_CASH) * 100, 2),
-            'trades':      len(u.get('transactions', [])),
-            'joined':      u.get('joined', '—')
+            'username': u['username'], 'total_value': round(total,2),
+            'pnl': round(pnl,2), 'pnl_pct': round((pnl/STARTING_CASH)*100,2),
+            'trades': len(u.get('transactions',[])), 'joined': u.get('joined','—')
         })
     board.sort(key=lambda x: x['total_value'], reverse=True)
-    for i, b in enumerate(board): b['rank'] = i + 1
+    for i, b in enumerate(board): b['rank'] = i+1
     return jsonify(board)
 
 @socketio.on('connect')
@@ -346,12 +309,12 @@ def on_connect():
 @socketio.on('disconnect')
 def on_disconnect():
     global connected_users
-    connected_users = max(0, connected_users - 1)
+    connected_users = max(0, connected_users-1)
     emit('user_count', {'count': connected_users}, broadcast=True)
 
 if __name__ == '__main__':
     t = threading.Thread(target=fetch_loop, daemon=True)
     t.start()
-    print("🚀 NiftyPulse → http://localhost:5000")
     port = int(os.environ.get('PORT', 5000))
+    print(f"NiftyPulse -> http://localhost:{port}")
     socketio.run(app, debug=False, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
