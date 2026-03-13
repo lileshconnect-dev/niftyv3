@@ -258,7 +258,7 @@ def api_trade():
     portfolio = u['portfolio']; cash = u['cash']
     if action == 'buy':
         if cash < total:
-            return jsonify({"ok":False,"msg":f"Need ₹{total:,.2f} but only ₹{cash:,.2f} available"})
+            return jsonify({"ok":False,"msg":f"Need Rs.{total:,.2f} but only Rs.{cash:,.2f} available"})
         cash -= total
         if ticker in portfolio:
             pos = portfolio[ticker]; new_qty = pos['qty'] + qty
@@ -294,7 +294,7 @@ def api_leaderboard():
         board.append({
             'username': u['username'], 'total_value': round(total,2),
             'pnl': round(pnl,2), 'pnl_pct': round((pnl/STARTING_CASH)*100,2),
-            'trades': len(u.get('transactions',[])), 'joined': u.get('joined','—')
+            'trades': len(u.get('transactions',[])), 'joined': u.get('joined','')
         })
     board.sort(key=lambda x: x['total_value'], reverse=True)
     for i, b in enumerate(board): b['rank'] = i+1
