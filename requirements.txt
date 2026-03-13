@@ -1,4 +1,4 @@
--e flask
+flask
 flask-socketio
 yfinance
 numpy
