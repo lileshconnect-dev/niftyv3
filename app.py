@@ -8,20 +8,20 @@ import threading
 import time
 import hashlib
 import os
- 
+
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'nifty50secret2024xyz')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
- 
+
 MONGO_URI = os.environ.get('MONGO_URI', '')
 client = MongoClient(MONGO_URI)
 db = client['niftypulse']
 users_col = db['users']
- 
+
 NIFTY_CASH  = 100000
 GLOBAL_CASH = 100000
 CRYPTO_CASH = 100000
- 
+
 # ── Indian Stocks ─────────────────────────────────────────────────────────────
 NIFTY_TICKERS = [
     'RELIANCE.NS','TCS.NS','HDFCBANK.NS','INFY.NS','ICICIBANK.NS',
@@ -36,7 +36,7 @@ NIFTY_TICKERS = [
     'SBILIFE.NS','HDFCLIFE.NS','BPCL.NS','IOC.NS','TATAPOWER.NS','PIDILITIND.NS',
     'PAYTM.NS','ATGL.NS'
 ]
- 
+
 NIFTY_NAMES = {
     'RELIANCE.NS':'Reliance Industries','TCS.NS':'Tata Consultancy Services',
     'HDFCBANK.NS':'HDFC Bank','INFY.NS':'Infosys','ICICIBANK.NS':'ICICI Bank',
@@ -57,14 +57,14 @@ NIFTY_NAMES = {
     'BPCL.NS':'BPCL','IOC.NS':'Indian Oil Corp','TATAPOWER.NS':'Tata Power',
     'PIDILITIND.NS':'Pidilite Industries','PAYTM.NS':'Paytm (One97)','ATGL.NS':'Adani Total Gas'
 }
- 
+
 # ── Global Stocks ─────────────────────────────────────────────────────────────
 GLOBAL_TICKERS = [
     'AAPL','TSLA','GOOGL','MSFT','AMZN','NVDA',
     'JPM','BAC','GS','V','MA',
     '005930.KS','TM','HSBC','BABA'
 ]
- 
+
 GLOBAL_NAMES = {
     'AAPL':'Apple Inc','TSLA':'Tesla Inc','GOOGL':'Alphabet (Google)',
     'MSFT':'Microsoft','AMZN':'Amazon','NVDA':'NVIDIA',
@@ -73,35 +73,52 @@ GLOBAL_NAMES = {
     '005930.KS':'Samsung Electronics','TM':'Toyota Motor',
     'HSBC':'HSBC Holdings','BABA':'Alibaba Group'
 }
- 
+
 # ── Crypto ────────────────────────────────────────────────────────────────────
 CRYPTO_TICKERS = [
     'BTC-USD','ETH-USD','BNB-USD','SOL-USD','XRP-USD','DOGE-USD'
 ]
- 
+
 CRYPTO_NAMES = {
     'BTC-USD':'Bitcoin','ETH-USD':'Ethereum','BNB-USD':'BNB',
     'SOL-USD':'Solana','XRP-USD':'XRP','DOGE-USD':'Dogecoin'
 }
- 
+
 ALL_NAMES = {**NIFTY_NAMES, **GLOBAL_NAMES, **CRYPTO_NAMES}
- 
+
 nifty_cache  = {}
 global_cache = {}
 crypto_cache = {}
 connected_users = 0
 fetch_lock = threading.Lock()
- 
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
 def get_user(username):
-    return users_col.find_one({'username': username}, {'_id': 0})
- 
+    u = users_col.find_one({'username': username}, {'_id': 0})
+    if not u: return None
+    # ── Migrate old field names to new format ──────────────────────────────────
+    changed = False
+    if 'nifty_cash' not in u:
+        u['nifty_cash']         = float(u.get('cash', NIFTY_CASH))
+        u['nifty_portfolio']    = u.get('portfolio', {})
+        u['nifty_transactions'] = u.get('transactions', [])
+        u['global_cash']        = float(GLOBAL_CASH)
+        u['global_portfolio']   = {}
+        u['global_transactions']= []
+        u['crypto_cash']        = float(CRYPTO_CASH)
+        u['crypto_portfolio']   = {}
+        u['crypto_transactions']= []
+        changed = True
+    if changed:
+        users_col.update_one({'username': username}, {'$set': u, '$unset': {'cash':1,'portfolio':1,'transactions':1}})
+    return u
+
 def save_user(u):
     users_col.update_one({'username': u['username']}, {'$set': u}, upsert=True)
- 
+
 def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
- 
+
 def new_user_doc(username, pw):
     return {
         'username': username,
@@ -120,7 +137,7 @@ def new_user_doc(username, pw):
         'crypto_transactions': [],
         'joined': datetime.now().strftime("%d %b %Y")
     }
- 
+
 # ── Analysis ──────────────────────────────────────────────────────────────────
 def calculate_rsi(prices, period=14):
     if len(prices) < period + 1: return 50
@@ -131,17 +148,17 @@ def calculate_rsi(prices, period=14):
     avg_loss = np.mean(losses[-period:])
     if avg_loss == 0: return 100
     return round(float(100 - (100 / (1 + avg_gain / avg_loss))), 2)
- 
+
 def moving_average(prices, w):
     if len(prices) < w: return None
     return round(float(np.mean(prices[-w:])), 2)
- 
+
 def predict_next(prices):
     if len(prices) < 5: return None
     x = np.arange(len(prices))
     c = np.polyfit(x, np.array(prices), 1)
     return round(float(np.polyval(c, len(prices))), 2)
- 
+
 def get_signal(prices, rsi, cur, pred):
     ma7  = moving_average(prices, 7)
     ma21 = moving_average(prices, 21)
@@ -160,7 +177,7 @@ def get_signal(prices, rsi, cur, pred):
     elif score <= -3: return {"action":"STRONG SELL","color":"strong-sell","reasons":reasons}
     elif score <= -1: return {"action":"SELL","color":"sell","reasons":reasons}
     else:             return {"action":"HOLD","color":"hold","reasons":reasons}
- 
+
 def fetch_one(ticker, names):
     try:
         hist = yf.Ticker(ticker).history(period="60d", interval="1d")
@@ -207,7 +224,7 @@ def fetch_one(ticker, names):
     except Exception as e:
         print(f"Error {ticker}: {e}")
         return None
- 
+
 def fetch_loop():
     while True:
         # Indian
@@ -245,18 +262,18 @@ def fetch_loop():
         except Exception as e:
             print(f"Emit error: {e}")
         time.sleep(30)
- 
+
 # ── Auth routes ───────────────────────────────────────────────────────────────
 @app.route('/')
 def index():
     if 'user' not in session: return redirect(url_for('login'))
     return render_template('index.html', username=session['user'])
- 
+
 @app.route('/stock/<market>/<ticker>')
 def stock_detail(market, ticker):
     if 'user' not in session: return redirect(url_for('login'))
     return render_template('stock.html', username=session['user'], market=market)
- 
+
 @app.route('/login', methods=['GET','POST'])
 def login():
     if request.method == 'POST':
@@ -269,7 +286,7 @@ def login():
             return jsonify({"ok": True})
         return jsonify({"ok": False, "msg": "Invalid username or password"})
     return render_template('auth.html')
- 
+
 @app.route('/register', methods=['POST'])
 def register():
     d = request.get_json()
@@ -282,12 +299,12 @@ def register():
     save_user(new_user_doc(u, p))
     session['user'] = u
     return jsonify({"ok": True})
- 
+
 @app.route('/logout')
 def logout():
     session.pop('user', None)
     return redirect(url_for('login'))
- 
+
 # ── Stock APIs ────────────────────────────────────────────────────────────────
 @app.route('/api/stocks')
 def api_stocks():
@@ -298,7 +315,7 @@ def api_stocks():
             'global': list(global_cache.values()),
             'crypto': list(crypto_cache.values()),
         })
- 
+
 @app.route('/api/stock/<market>/<ticker>')
 def api_stock_detail(market, ticker):
     if 'user' not in session: return jsonify({}), 401
@@ -315,7 +332,7 @@ def api_stock_detail(market, ticker):
             data = crypto_cache.get(key)
             if not data: data = fetch_one(key, CRYPTO_NAMES)
     return jsonify(data or {})
- 
+
 # ── Portfolio API ─────────────────────────────────────────────────────────────
 def build_portfolio(u, market):
     portfolio_key    = f'{market}_portfolio'
@@ -324,7 +341,7 @@ def build_portfolio(u, market):
     starting         = NIFTY_CASH if market=='nifty' else GLOBAL_CASH if market=='global' else CRYPTO_CASH
     cache            = nifty_cache if market=='nifty' else global_cache if market=='global' else crypto_cache
     names            = NIFTY_NAMES if market=='nifty' else GLOBAL_NAMES if market=='global' else CRYPTO_NAMES
- 
+
     portfolio_list = []; total_invested = 0; total_current = 0
     for ticker, pos in u.get(portfolio_key, {}).items():
         with fetch_lock:
@@ -354,13 +371,13 @@ def build_portfolio(u, market):
         'transactions':   u.get(tx_key, [])[-30:],
         'starting':       starting,
     }
- 
+
 @app.route('/api/portfolio/<market>')
 def api_portfolio(market):
     if 'user' not in session: return jsonify({}), 401
     u = get_user(session['user'])
     return jsonify(build_portfolio(u, market))
- 
+
 # ── Trade API ─────────────────────────────────────────────────────────────────
 @app.route('/api/trade', methods=['POST'])
 def api_trade():
@@ -370,27 +387,27 @@ def api_trade():
     action = d.get('action')
     market = d.get('market','nifty')
     amount = float(d.get('amount', 0))   # buy by amount in currency
- 
+
     cache = nifty_cache if market=='nifty' else global_cache if market=='global' else crypto_cache
     names = NIFTY_NAMES if market=='nifty' else GLOBAL_NAMES if market=='global' else CRYPTO_NAMES
- 
+
     portfolio_key = f'{market}_portfolio'
     cash_key      = f'{market}_cash'
     tx_key        = f'{market}_transactions'
- 
+
     u = get_user(session['user'])
     with fetch_lock:
         stock = cache.get(ticker)
     if not stock: return jsonify({"ok":False,"msg":"Stock data not ready yet, wait 1 min"})
- 
+
     price = stock['price']
     # Calculate qty from amount
     qty = round(amount / price, 6)
     total = round(price * qty, 2)
- 
+
     portfolio = u.get(portfolio_key, {})
     cash      = u.get(cash_key, 0)
- 
+
     if action == 'buy':
         if cash < total:
             return jsonify({"ok":False,"msg":f"Need {total:,.2f} but only {cash:,.2f} available"})
@@ -409,7 +426,7 @@ def api_trade():
         portfolio[ticker]['qty'] = round(portfolio[ticker]['qty'] - sell_qty, 6)
         if portfolio[ticker]['qty'] <= 0.000001:
             del portfolio[ticker]
- 
+
     txs = u.get(tx_key, [])
     txs.append({
         'action': action.upper(),
@@ -423,7 +440,7 @@ def api_trade():
     save_user({**u, cash_key: cash, portfolio_key: portfolio, tx_key: txs})
     sym = '₹' if market=='nifty' else '$'
     return jsonify({"ok":True, "cash": round(cash,2), "msg": f"{action.upper()} {round(qty,4)} × {ticker} @ {sym}{price:,.2f}"})
- 
+
 # ── Leaderboard ───────────────────────────────────────────────────────────────
 @app.route('/api/leaderboard/<market>')
 def api_leaderboard(market):
@@ -431,11 +448,21 @@ def api_leaderboard(market):
     starting = NIFTY_CASH if market=='nifty' else GLOBAL_CASH if market=='global' else CRYPTO_CASH
     port_key = f'{market}_portfolio'
     cash_key = f'{market}_cash'
- 
+
     board = []
     for u in users_col.find({}, {'_id': 0}):
-        total = u.get(cash_key, starting)
-        for ticker, pos in u.get(port_key, {}).items():
+        # handle old field names for nifty
+        if market == 'nifty' and cash_key not in u:
+            cash      = float(u.get('cash', starting))
+            portfolio = u.get('portfolio', {})
+            tx        = u.get('transactions', [])
+        else:
+            cash      = u.get(cash_key, starting)
+            portfolio = u.get(port_key, {})
+            tx        = u.get(f'{market}_transactions', [])
+
+        total = cash
+        for ticker, pos in portfolio.items():
             with fetch_lock:
                 cur = cache.get(ticker, {}).get('price', pos['avg_price'])
             total += pos['qty'] * cur
@@ -445,26 +472,26 @@ def api_leaderboard(market):
             'total_value': round(total, 2),
             'pnl':         round(pnl, 2),
             'pnl_pct':     round((pnl/starting)*100, 2),
-            'trades':      len(u.get(f'{market}_transactions', [])),
+            'trades':      len(tx),
             'joined':      u.get('joined', '')
         })
     board.sort(key=lambda x: x['total_value'], reverse=True)
     for i, b in enumerate(board): b['rank'] = i+1
     return jsonify(board)
- 
+
 # ── Socket ────────────────────────────────────────────────────────────────────
 @socketio.on('connect')
 def on_connect():
     global connected_users
     connected_users += 1
     emit('user_count', {'count': connected_users}, broadcast=True)
- 
+
 @socketio.on('disconnect')
 def on_disconnect():
     global connected_users
     connected_users = max(0, connected_users-1)
     emit('user_count', {'count': connected_users}, broadcast=True)
- 
+
 if __name__ == '__main__':
     t = threading.Thread(target=fetch_loop, daemon=True)
     t.start()
