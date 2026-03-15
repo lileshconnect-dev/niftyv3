@@ -124,10 +124,10 @@ main{max-width:1100px;margin:0 auto;padding:24px 22px;}
     <h3 id="mTitle">Trade</h3>
     <div class="msub" id="mSub"></div>
     <div class="mfield">
-      <label>Quantity</label>
-      <input type="number" id="mQty" min="1" value="1" oninput="updateTotal()"/>
+      <label>Amount to invest</label>
+      <input type="number" id="mQty" min="1" value="1000" oninput="updateTotal()"/>
     </div>
-    <div class="mtotal"><span>Total</span><strong id="mTotal">₹0</strong></div>
+    <div class="mtotal"><span>Total</span><strong id="mTotal">—</strong></div>
     <div class="mbtns">
       <button class="mcancel" onclick="closeModal()">Cancel</button>
       <button class="mconfirm buy" id="mConfirm" onclick="confirmTrade()">Confirm</button>
@@ -138,12 +138,16 @@ main{max-width:1100px;margin:0 auto;padding:24px 22px;}
 <div class="toast" id="toast"></div>
 
 <script>
-const ticker = location.pathname.split('/').pop();
+const pathParts = location.pathname.split('/');
+const market  = pathParts[2] || 'nifty';
+const ticker  = pathParts[3] || pathParts[2];
+const SYM     = {nifty:'₹', global:'$', crypto:'$'};
+const sym     = SYM[market] || '₹';
 let stockData = null;
 let tradeAction = 'buy';
 let myChart = null;
 
-const fmt = n => n!=null ? n.toLocaleString('en-IN',{maximumFractionDigits:2}) : '—';
+const fmt = n => n!=null ? n.toLocaleString('en-IN',{maximumFractionDigits:4}) : '—';
 
 function showToast(msg,ok){
   const t=document.getElementById('toast');
@@ -153,7 +157,7 @@ function showToast(msg,ok){
 
 async function load(){
   try{
-    const r = await fetch(`/api/stock/${ticker}`);
+    const r = await fetch(`/api/stock/${market}/${ticker}`);
     const d = await r.json();
     if(!d||!d.price){
       document.getElementById('content').innerHTML='<div class="loading">Data loading… refresh in 1 minute.<br><br><a href="/" style="color:var(--green)">← Back</a></div>';
@@ -305,23 +309,27 @@ function openTrade(action){
   if(!stockData){showToast('Data not loaded','err');return;}
   tradeAction=action;
   document.getElementById('mTitle').textContent=(action==='buy'?'Buy ':'Sell ')+ticker;
-  document.getElementById('mSub').textContent=`${stockData.name} · ₹${fmt(stockData.price)}`;
+  document.getElementById('mSub').textContent=`${stockData.name} · ${sym}${fmt(stockData.price)}`;
   document.getElementById('mConfirm').className=`mconfirm ${action}`;
   document.getElementById('mConfirm').textContent=`Confirm ${action==='buy'?'Buy':'Sell'}`;
-  document.getElementById('mQty').value=1;
+  document.getElementById('mQty').value=1000;
   updateTotal();
   document.getElementById('tradeModal').classList.add('open');
 }
 function updateTotal(){
-  const qty=parseInt(document.getElementById('mQty').value)||0;
-  document.getElementById('mTotal').textContent='₹'+fmt(qty*(stockData?.price||0));
+  const amount=parseFloat(document.getElementById('mQty').value)||0;
+  const qty=stockData?(amount/stockData.price):0;
+  document.getElementById('mTotal').textContent=`${sym}${fmt(amount)} → ${qty.toFixed(6)} units`;
 }
 function closeModal(){document.getElementById('tradeModal').classList.remove('open');}
 async function confirmTrade(){
-  const qty=parseInt(document.getElementById('mQty').value);
-  if(!qty||qty<1){showToast('Enter valid quantity','err');return;}
+  const amount=parseFloat(document.getElementById('mQty').value);
+  if(!amount||amount<=0){showToast('Enter valid amount','err');return;}
   closeModal();
-  const r=await fetch('/api/trade',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ticker:stockData.ticker,action:tradeAction,qty})});
+  const fullTicker = market==='nifty'?(ticker.includes('.NS')?ticker:ticker+'.NS'):
+                     market==='crypto'?(ticker.includes('-USD')?ticker:ticker+'-USD'):ticker;
+  const r=await fetch('/api/trade',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ticker:fullTicker,action:tradeAction,market,amount})});
   const d=await r.json();
   showToast(d.msg,d.ok);
 }
